@@ -344,7 +344,16 @@ impl Monitor {
                 }
                 Ok(true)
             }
-            _ => Ok(false),
+            // Static credentials won't become valid by retrying, so waiting
+            // clients would only sit until the checkout timeout: fail them
+            // now so the frontend can report the authentication error.
+            // External identity tokens are refreshed between attempts, so
+            // those pools keep retrying.
+            Err(Error::ServerAuth) if !self.pool.addr().server_auth.is_external_identity() => {
+                self.pool.lock().close_waiters(Error::ServerAuth);
+                Ok(false)
+            }
+            Err(_) => Ok(false),
         }
     }
 

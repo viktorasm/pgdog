@@ -1312,3 +1312,51 @@ fn test_reset_stats_clears_cumulative_statistics() {
     assert_eq!(state.out_of_sync, 0);
     assert_eq!(state.force_close, 0);
 }
+
+/// Token validation dials with the client's credential, so a wrong client
+/// token must not make a healthy pool look like its own credentials were
+/// rejected.
+#[tokio::test]
+async fn test_validate_token_does_not_record_connect_outcome() {
+    crate::logger();
+    let pool = pool();
+
+    // Force a real connection with the pool's own credentials.
+    drop(pool.get(&Request::default()).await.unwrap());
+    assert_eq!(pool.connect_outcome(), ConnectOutcome::Connected);
+
+    assert!(!pool.validate_token("not-the-password").await.unwrap());
+    assert_eq!(pool.connect_outcome(), ConnectOutcome::Connected);
+}
+
+/// A pool whose static credentials the server rejects fails waiting clients
+/// immediately with the authentication error instead of letting them sit
+/// until the checkout timeout.
+#[tokio::test]
+async fn test_rejected_credentials_fail_waiters_fast() {
+    crate::logger();
+
+    let pool = Pool::new(&PoolConfig {
+        address: Address {
+            host: "127.0.0.1".into(),
+            port: 5432,
+            database_name: "pgdog".into(),
+            user: "pgdog".into(),
+            passwords: vec!["not-the-password".into()],
+            ..Default::default()
+        },
+        config: Config {
+            max: 1,
+            min: 0,
+            checkout_timeout: Duration::from_secs(30),
+            ..Config::default()
+        },
+    });
+    pool.launch();
+
+    let result = timeout(Duration::from_secs(5), pool.get(&Request::default()))
+        .await
+        .expect("checkout to fail before the checkout timeout");
+    assert_eq!(result.err(), Some(Error::ServerAuth));
+    assert_eq!(pool.connect_outcome(), ConnectOutcome::AuthFailed);
+}

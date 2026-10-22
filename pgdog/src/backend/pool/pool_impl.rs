@@ -19,6 +19,7 @@ use crate::net::{
     messages::{BackendPid, FrontendPid},
 };
 
+use super::ConnectOutcome;
 use super::inner::CheckInResult;
 use super::{
     Address, Comms, Config, Error, Guard, Healtcheck, Inner, Monitor, Oids, PoolConfig, Request,
@@ -450,6 +451,12 @@ impl Pool {
     /// Pool exclusive lock.
     pub(super) fn lock(&self) -> MutexGuard<'_, RawMutex, Inner> {
         self.inner.inner.lock()
+    }
+
+    /// Outcome of the last connection attempt made with the pool's own
+    /// credentials.
+    pub(crate) fn connect_outcome(&self) -> ConnectOutcome {
+        self.lock().connect_outcome
     }
 
     /// Mark or unmark a checked-out backend as pinned to its client.

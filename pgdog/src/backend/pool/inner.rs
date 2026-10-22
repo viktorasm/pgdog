@@ -13,7 +13,9 @@ use pgdog_config::Role;
 use pgdog_stats::RoleSpecificConfig;
 use tokio::time::Instant;
 
-use super::{Config, Error, Pool, Request, Stats, Taken, Waiter, lsn_monitor::ReplicaLag};
+use super::{
+    Config, ConnectOutcome, Error, Pool, Request, Stats, Taken, Waiter, lsn_monitor::ReplicaLag,
+};
 
 /// Pool internals protected by a mutex.
 #[derive(Default)]
@@ -54,6 +56,11 @@ pub(super) struct Inner {
     pub(super) credentials_generation: u64,
     /// Pool role.
     pub(super) role: Role,
+    /// Outcome of the last connection attempt made with the pool's own
+    /// credentials. Unlike the ban state, this survives ban/unban cycles,
+    /// so the frontend can tell an authentication failure apart from an
+    /// outage.
+    pub(super) connect_outcome: ConnectOutcome,
 }
 
 impl std::fmt::Debug for Inner {
@@ -88,6 +95,7 @@ impl Inner {
             replica_lag: ReplicaLag::default(),
             credentials_generation: 0,
             role: Role::Auto,
+            connect_outcome: ConnectOutcome::default(),
         }
     }
     /// Total number of connections managed by the pool.

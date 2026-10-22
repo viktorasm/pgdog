@@ -28,8 +28,8 @@ use crate::{
 };
 
 use super::{
-    Address, CanonicalOids, ClusterFailoverSignalWatcher, ClusterMetrics, Config, Error, Guard,
-    Request, Shard, ShardConfig,
+    Address, CanonicalOids, ClusterFailoverSignalWatcher, ClusterMetrics, Config, ConnectOutcome,
+    Error, Guard, Request, Shard, ShardConfig,
 };
 use crate::config::LoadBalancingStrategy;
 use launch::Readiness;
@@ -490,6 +490,27 @@ impl Cluster {
         }
 
         Ok(())
+    }
+
+    /// True when every pool that has attempted a backend connection was
+    /// rejected by the server because of its credentials, and at least one
+    /// pool has attempted one. The cluster being "down" is then an
+    /// authentication failure, not an outage.
+    ///
+    /// Pools that haven't connected yet (e.g. lazily populated replicas)
+    /// don't count either way, so a single rejected primary is enough.
+    pub(crate) fn auth_failed(&self) -> bool {
+        let mut attempted = false;
+
+        for pool in self.shards.iter().flat_map(|shard| shard.pool_iter()) {
+            match pool.connect_outcome() {
+                ConnectOutcome::NotAttempted => (),
+                ConnectOutcome::AuthFailed => attempted = true,
+                ConnectOutcome::Connected | ConnectOutcome::Failed => return false,
+            }
+        }
+
+        attempted
     }
 
     /// Get all shards.

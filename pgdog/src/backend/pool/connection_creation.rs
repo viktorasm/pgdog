@@ -8,7 +8,7 @@ use tracing::error;
 
 use super::{
     super::{ConnectReason, Oids, Pool, Server, ServerOptions},
-    Address, Error,
+    Address, ConnectOutcome, Error,
 };
 
 pub(super) struct ConnectionArgs<'a> {
@@ -65,6 +65,10 @@ pub(super) async fn create(args: ConnectionArgs<'_>) -> Result<Server, Error> {
     let mut error = Error::ServerError;
     let now = Instant::now();
 
+    // Token validation dials with the client's credential, so its outcome
+    // says nothing about the pool's own credentials and isn't recorded.
+    let track_outcome = reason != ConnectReason::ValidateToken;
+
     for attempt in 0..attempts {
         match safe_timeout(
             timeout,
@@ -85,6 +89,9 @@ pub(super) async fn create(args: ConnectionArgs<'_>) -> Result<Server, Error> {
                     guard.stats.counts.connect_count += 1;
                     guard.stats.counts.connect_time += elapsed;
                     guard.stats.counts.auth_attempts += conn.password_attempts();
+                    if track_outcome {
+                        guard.connect_outcome = ConnectOutcome::Connected;
+                    }
                     conn.set_credentials_generation(guard.credentials_generation());
                 }
                 conn.apply_lifetime_jitter(max_age, max_age_jitter);
@@ -125,6 +132,13 @@ pub(super) async fn create(args: ConnectionArgs<'_>) -> Result<Server, Error> {
                 );
                 error = Error::ConnectTimeout;
             }
+        }
+
+        if track_outcome {
+            pool.lock().connect_outcome = match error {
+                Error::ServerAuth => ConnectOutcome::AuthFailed,
+                _ => ConnectOutcome::Failed,
+            };
         }
 
         safe_sleep(delay).await;

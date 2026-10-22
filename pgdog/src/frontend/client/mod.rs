@@ -401,6 +401,20 @@ impl Client {
             Ok(params) => params,
             Err(err) => {
                 if err.no_server() {
+                    // A pool can also be down because the server rejected the
+                    // credentials it was presented with. Under passthrough
+                    // auth the client owns the credential, so surface the
+                    // authentication failure instead of a generic
+                    // availability error.
+                    if conn.cluster().is_ok_and(|cluster| cluster.auth_failed()) {
+                        error!(
+                            "aborting new client connection, server rejected the credentials [{}]",
+                            addr
+                        );
+                        stream.fatal(ErrorResponse::auth(user, &database)).await?;
+                        return Ok(None);
+                    }
+
                     error!(
                         "aborting new client connection, connection pool is down [{}]",
                         addr
